@@ -1,0 +1,22 @@
+{
+  "name": "octobus-business-identification-js",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "business-identification": "bin/business-identification.js"
+  },
+  "dependencies": {
+    "@chaitin-ai/octobus-sdk": "^0.6.0",
+    "sql.js": "^1.12.0"
+  },
+  "scripts": {
+    "validate": "octobus-sdk validate --strict",
+    "test": "node test/loop.mjs",
+    "generate-alerts": "node scripts/generate-alerts.mjs"
+  },
+  "devDependencies": {
+    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/proto-loader": "^0.8.1"
+  }
+}

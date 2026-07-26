@@ -1,0 +1,10 @@
+{
+  "name": "bi-webui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "^4.21.0",
+    "sql.js": "^1.12.0"
+  }
+}

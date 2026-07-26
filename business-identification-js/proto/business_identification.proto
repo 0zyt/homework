@@ -1,0 +1,183 @@
+syntax = "proto3";
+
+package businessidentification.v1;
+
+// BusinessIdentificationService hosts the deterministic business-identification
+// closed loop on OctoBus: demo data -> candidate discovery -> agent analysis
+// -> replay -> publish -> incoming dry-run match.
+service BusinessIdentificationService {
+  rpc ResetDemo(ResetDemoRequest) returns (ResetDemoResponse);
+  rpc DiscoverCandidates(DiscoverCandidatesRequest) returns (DiscoverCandidatesResponse);
+  rpc ListCandidates(ListCandidatesRequest) returns (ListCandidatesResponse);
+  rpc GetCandidateContext(GetCandidateContextRequest) returns (GetCandidateContextResponse);
+  rpc SaveCandidateAnalysis(SaveCandidateAnalysisRequest) returns (SaveCandidateAnalysisResponse);
+  rpc RunReplay(RunReplayRequest) returns (RunReplayResponse);
+  rpc PublishPattern(PublishPatternRequest) returns (PublishPatternResponse);
+  rpc MatchIncomingAlerts(MatchIncomingAlertsRequest) returns (MatchIncomingAlertsResponse);
+}
+
+message ResetDemoRequest {
+  string tenant_id = 1;
+  string data_dir = 2;
+  int32 normal_count = 3;  // training data count, default 1000
+}
+
+message ResetDemoResponse {
+  int32 imported_count = 1;
+  string training_window_start = 2;
+  string training_window_end = 3;
+  string testing_window_start = 4;
+  string testing_window_end = 5;
+  string live_window_start = 6;
+  string live_window_end = 7;
+}
+
+message DiscoverCandidatesRequest {
+  string tenant_id = 1;
+  string discovery_start = 2;
+  string discovery_end = 3;
+  string algorithm = 4; // EXACT_GROUP (default) or SIMILARITY
+  int32 min_alert_count = 5;
+  int32 min_active_days = 6;
+  int32 min_source_count = 7;
+  double min_success_rate = 8;
+}
+
+message DiscoverCandidatesResponse {
+  string run_id = 1;
+  string algorithm = 2;
+  int32 scanned_count = 3;
+  int32 group_count = 4;
+  int32 candidate_count = 5;
+  repeated string candidate_ids = 6;
+}
+
+message ListCandidatesRequest {
+  string tenant_id = 1;
+  string status = 2; // optional filter
+}
+
+message CandidateSummary {
+  string id = 1;
+  string run_id = 2;
+  string candidate_type = 3; // EXACT_GROUP | SIMILARITY_CLUSTER
+  string status = 4;
+  int32 alert_count = 5;
+  int32 active_days = 6;
+  int32 source_count = 7;
+  double success_rate = 8;
+  string common_features_json = 9;
+  string statistics_json = 10;
+  string risk_summary_json = 11;
+}
+
+message ListCandidatesResponse {
+  repeated CandidateSummary candidates = 1;
+}
+
+message GetCandidateContextRequest {
+  string candidate_id = 1;
+}
+
+message AlertSample {
+  string alert_id = 1;
+  string service_key = 2;
+  string http_method = 3;
+  string url = 4;
+  int32 response_status = 5;
+  string risk_level = 6;
+  string note = 7;
+}
+
+message GetCandidateContextResponse {
+  string candidate_id = 1;
+  string summary_json = 2;
+  repeated AlertSample representative_samples = 3;
+  repeated AlertSample boundary_samples = 4;
+  repeated AlertSample risk_samples = 5;
+}
+
+message Condition {
+  string field = 1;
+  string operator = 2; // eq|neq|in|not_in|contains|not_contains|starts_with
+  string value_json = 3; // JSON-encoded value (string|number|bool|array)
+}
+
+message SaveCandidateAnalysisRequest {
+  string candidate_id = 1;
+  string business_name = 2;
+  string business_summary = 3;
+  repeated string evidence = 4;
+  repeated Condition must_conditions = 5;
+  repeated Condition veto_conditions = 6;
+  double confidence = 7;
+  string risk_level = 8;
+  repeated string uncertainties = 9;
+  string raw_agent_output = 10;
+  string report_json = 11;
+}
+
+message SaveCandidateAnalysisResponse {
+  bool accepted = 1;
+  string analysis_id = 2;
+  repeated string validation_errors = 3;
+}
+
+message RunReplayRequest {
+  string candidate_id = 1;
+  string analysis_id = 2;
+  string replay_start = 3;
+  string replay_end = 4;
+}
+
+message RunReplayResponse {
+  string replay_id = 1;
+  int32 scanned_count = 2;
+  int32 pattern_matched_count = 3;
+  int32 suppression_suggested_count = 4;
+  int32 risk_vetoed_count = 5;
+  int32 boundary_vetoed_count = 6;
+  int32 confirmed_attack_demoted_count = 7;
+  int32 known_risk_demoted_count = 8;
+  double precision = 9;
+  double recall = 10;
+  bool passed = 11;
+  string details_json = 12;
+}
+
+message PublishPatternRequest {
+  string candidate_id = 1;
+  string analysis_id = 2;
+  string replay_id = 3;
+  string approved_by = 4;
+  string approved_comment = 5;
+}
+
+message PublishPatternResponse {
+  bool published = 1;
+  string pattern_id = 2;
+  repeated string errors = 3;
+}
+
+message MatchIncomingAlertsRequest {
+  string tenant_id = 1;
+  repeated string alert_ids = 2; // optional explicit ids
+  string incoming_start = 3; // optional window
+  string incoming_end = 4;
+}
+
+message MatchResult {
+  string alert_id = 1;
+  bool matched = 2;
+  string pattern_id = 3;
+  string decision = 4; // SUGGEST_SUPPRESS | KEEP_ALERT
+  string reason_json = 5;
+}
+
+message MatchIncomingAlertsResponse {
+  int32 scanned_count = 1;
+  int32 matched_count = 2;
+  int32 suggest_suppress_count = 3;
+  int32 keep_alert_count = 4;
+  repeated MatchResult results = 5;
+}

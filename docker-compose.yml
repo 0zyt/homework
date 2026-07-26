@@ -1,0 +1,99 @@
+# OctoBus + agent-compose 集成部署
+#
+# 业务识别 Agent MVP：OctoBus 托管 Node.js 业务识别 Service（确定性引擎），
+# agent-compose 通过「原生 capset gRPC 数据面」对接（设计文档 octobus_integration.md）。
+#
+# 数据面：guest agent(codex) -> agent-compose capproxy(7411) -> OctoBus gRPC(9000)
+#   - 不通过 remote MCP（设计文档明确：MCP/REST 不暴露给 guest）。
+#   - 守护进程以 CAP_GRPC_LISTEN 启动透明代理，并以 CAP_GRPC_TARGET 把 guest 可达地址注入沙箱。
+#   - 能力网关 addr/token 通过 agent-compose 管理 API 注入 DB（见 init/seed 步骤）。
+#
+# 网络：octobus(9000) 与 agent-compose(7410/7411) 同处默认 bridge 网络。
+#       本机可通过 127.0.0.1:9000（OctoBus）与 127.0.0.1:7410（agent-compose）访问。
+
+services:
+  octobus:
+    image: ${OCTOBUS_IMAGE:-ghcr.io/chaitin/octobus:latest}
+    container_name: octobus
+    restart: unless-stopped
+    # OCTOBUS_ADDR 是「守护进程监听地址」(host:port)，不能同时带 http:// 前缀，
+    # 否则 octobus CLI 的 admin 地址解析会失败；CLI 在 init-octobus.sh 中单独覆盖。
+    environment:
+      OCTOBUS_ADDR: 0.0.0.0:9000
+      OCTOBUS_DATA_DIR: /var/lib/octobus
+    volumes:
+      - octobus-data:/var/lib/octobus
+      - ./data:/var/lib/octobus/instances/bi-prod/data
+      # Service 源码（只读挂载，仅作为导入源；OctoBus 会复制到数据卷后再 npm install）
+      - ./business-identification-js:/opt/services/business-identification:ro
+      # 让 init 脚本能读取 capset token 等变量
+      - ./.env:/opt/octobus-init.env:ro
+      # 初始化脚本（在容器内执行）
+      - ./init-octobus.sh:/opt/octobus-init.sh:ro
+    ports:
+      - 127.0.0.1:9000:9000
+    healthcheck:
+      # 管理 API 默认无需 token；用 curl 探活（CLI 因地址 scheme 问题不适合做 healthcheck）
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/admin/v1/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  agent-compose:
+    # 应用层方案：使用已发布的 agent-compose 守护进程镜像，不修改任何 runtime 源码。
+    # capset gRPC 数据面所需的全部配置均为声明式（capset_ids + 守护进程 env + 网关 seed）。
+    image: ${AGENT_COMPOSE_IMAGE:-ghcr.io/chaitin/agent-compose:latest}
+    container_name: agent-compose
+    restart: unless-stopped
+    depends_on:
+      octobus:
+        condition: service_healthy
+    environment:
+      AGENT_COMPOSE_RUNTIME_BASE_URL: http://agent-compose:7410
+      # 原生能力集数据面（gRPC 透明代理）所需；启用 capset_ids 时必须同时配置这两项
+      CAP_GRPC_LISTEN: 0.0.0.0:7411
+      CAP_GRPC_TARGET: agent-compose:7411
+      # Anthropic-compatible provider (DeepSeek)
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.deepseek.com/anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-deepseek-v4-flash}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-compose-data:/data
+      - ./agent-compose.yml:/data/work/agent-compose.yml:ro
+      - ./.env:/data/work/.env:ro
+    working_dir: /data/work
+    ports:
+      - 127.0.0.1:7410:7410
+
+  webui:
+    build: ./webui
+    container_name: bi-webui
+    restart: unless-stopped
+    depends_on:
+      octobus:
+        condition: service_healthy
+    environment:
+      - DB_PATH=/data/bi-store.db
+      - OCTOBUS_URL=http://octobus:9000
+      - CAPSET_TOKEN=${OCTOBUS_BI_CAPSET_TOKEN:-bi-capset-demo-token-0001}
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - 127.0.0.1:3456:3456
+
+  agent-compose-frontend:
+    image: ${AGENT_COMPOSE_FRONTEND_IMAGE:-ghcr.io/chaitin/agent-compose-ui:latest}
+    container_name: agent-compose-frontend
+    profiles: ["with-ui"]
+    restart: unless-stopped
+    depends_on:
+      - agent-compose
+    ports:
+      - 127.0.0.1:8080:8000
+
+volumes:
+  octobus-data:
+  agent-compose-data:

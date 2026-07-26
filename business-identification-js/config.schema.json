@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "dataDir": {
+      "type": "string",
+      "description": "Directory for the service's persistent data store. Defaults to <instance workdir>/data."
+    }
+  }
+}

@@ -1,0 +1,18 @@
+# 依赖与构建产物
+node_modules/
+business-identification-js/node_modules/
+
+# 运行时数据卷（容器内挂载，本机不提交）
+data/
+*.db
+
+# 本地密钥/环境
+.env
+.env.local
+
+# 日志
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

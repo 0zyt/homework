@@ -1,0 +1,15 @@
+{
+  "schema": "chaitin.octobus.service.v1",
+  "name": "business-identification",
+  "displayName": "Business Identification JS",
+  "description": "Deterministic business-identification closed loop (candidate discovery, agent analysis validation, replay, publish, dry-run match) exposed on OctoBus.",
+  "runtime": {
+    "mode": "long-running"
+  },
+  "proto": {
+    "roots": ["proto"],
+    "files": ["proto/business_identification.proto"]
+  },
+  "configSchema": "config.schema.json",
+  "secretSchema": "secret.schema.json"
+}

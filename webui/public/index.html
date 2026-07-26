@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>业务识别 - 人工审批台</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>业务识别 - 人工审批台</h1>
+  <nav>
+    <button class="tab active" data-tab="rules" onclick="showTab('rules')">待审核规则</button>
+    <button class="tab" data-tab="published" onclick="showTab('published')">已发布规则</button>
+    <button class="tab" data-tab="verify" onclick="showTab('verify')">效果验证</button>
+    <button class="tab" data-tab="demo" onclick="showTab('demo')">演示控制台</button>
+  </nav>
+</header>
+
+<main>
+  <!-- Rules tab -->
+  <section id="tab-rules" class="active">
+    <div id="rules-list">加载中...</div>
+  </section>
+
+  <!-- Published tab -->
+  <section id="tab-published">
+    <div id="published-list">加载中...</div>
+  </section>
+
+  <!-- Demo tab -->
+  <section id="tab-demo">
+    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:280px;background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1);">
+        <h3 style="margin-bottom:12px;">数据生成</h3>
+        <label>正常告警数: <input id="d-count" type="number" value="1000" min="100" max="10000" style="width:80px;"></label>
+        <button id="d-gen" onclick="resetDemo()" style="margin-left:8px;background:#337ab7;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;">生成训练数据</button>
+        <div id="d-status" style="margin-top:8px;font-size:13px;color:#666;"></div>
+        <div style="font-size:12px;color:#999;margin-top:8px;">
+          生成最近24h训练数据 + 独立验证集。边界≈5%、风险≈6%。
+        </div>
+      </div>
+      <div style="flex:1;min-width:280px;background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1);">
+        <h3 style="margin-bottom:12px;">Agent 训练</h3>
+        <button id="d-analyze" onclick="triggerAgent()" style="background:#5cb85c;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;">触发 Agent 研判</button>
+        <div id="d-agent-status" style="margin-top:8px;font-size:13px;color:#666;"></div>
+        <div style="font-size:12px;color:#999;margin-top:8px;">
+          Agent 将执行：Discover → 分析 → 保存(含report_json) → 回放 → 提交审核台。
+        </div>
+      </div>
+    </div>
+    <div style="background:#fff;padding:16px;border-radius:8px;margin-top:16px;box-shadow:0 1px 3px rgba(0,0,0,.1);">
+      <h3 style="margin-bottom:8px;">演示步骤</h3>
+      <ol style="font-size:14px;color:#555;line-height:1.8;">
+        <li><b>生成训练数据</b> — 点击上面按钮，会同时生成最近24h训练告警和独立验证集</li>
+        <li><b>触发 Agent 研判</b> — Agent 自动发现候选、分析业务含义、生成规则、回放验证</li>
+        <li><b>切换到"待审核规则"</b> — 查看 Agent 提交的分析报告，批准发布</li>
+        <li><b>切换到"效果验证"</b> — 执行降噪效果验证，查看 Precision/Recall</li>
+      </ol>
+    </div>
+  </section>
+  <section id="tab-verify">
+    <div class="verify-form">
+      <label>租户: <input id="v-tenant" value="tenant-a"></label>
+      <button id="v-run" onclick="runVerify()">执行降噪效果验证</button>
+      <span id="v-status"></span>
+    </div>
+    <div id="verify-result"></div>
+  </section>
+
+  <!-- Detail modal -->
+  <div id="modal" class="modal-overlay" onclick="closeModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeModal()">X</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const API = "/api";
+
+function showTab(name) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelector(`.tab[data-tab="${name}"]`).classList.add("active");
+  document.querySelectorAll("main > section").forEach(s => s.classList.remove("active"));
+  document.getElementById(`tab-${name}`).classList.add("active");
+  if (name === "rules") loadRules();
+  else if (name === "published") loadPublished();
+}
+
+async function loadRules() {
+  const el = document.getElementById("rules-list");
+  el.innerHTML = "加载中...";
+  try {
+    const rules = await fetch(API + "/rules").then(r => r.json());
+  if (rules.error) { el.innerHTML = "<p class='error'>" + rules.error + "</p>"; return; }
+  if (!rules.length) { el.innerHTML = "<p>暂无待审核规则</p>"; return; }
+
+  el.innerHTML = rules.map(r => `
+    <div class="rule-card ${r.published ? 'published' : r.accepted ? 'pending' : 'rejected'}">
+      <div class="rule-header">
+        <span class="badge">${r.published ? '已发布' : r.accepted ? '待审核' : '已驳回'}</span>
+        <span class="rule-name">${esc(r.businessName)}</span>
+        <span class="rule-id">${esc(r.id)}</span>
+      </div>
+      <div class="rule-summary">
+        ${r.replay ? `
+          <span class="stat">精确率 (Precision): ${(r.replay.precision*100).toFixed(0)}%</span>
+          <span class="stat">召回率 (Recall): ${(r.replay.recall*100).toFixed(0)}%</span>
+          <span class="stat ${r.replay.passed ? 'pass' : 'fail'}">${r.replay.passed ? '通过' : '失败'}</span>
+        ` : '<span class="stat">无回放</span>'}
+        <span class="stat">置信度: ${(r.confidence||0)*100}%</span>
+        <span class="stat">风险: ${esc(r.riskLevel)}</span>
+      </div>
+      ${r.report ? `
+        <div class="report-snippet">
+          ${r.report.suggestion ? '<strong>建议: </strong>'+esc(r.report.suggestion)+' | ' : ''}
+          ${r.report.interpretation ? esc(r.report.interpretation.slice(0, 100))+(r.report.interpretation.length>100?'...':'') : ''}
+        </div>
+      ` : ''}
+      <div class="rule-actions">
+        <button class="btn-detail" onclick="showDetail('${r.id}')">查看详情</button>
+        <button class="btn-approve" onclick="approveRule('${r.id}')" ${r.published ? 'disabled' : ''}>批准发布</button>
+        <button class="btn-reject" onclick="rejectRule('${r.id}')" ${r.published || !r.accepted ? 'disabled' : ''}>驳回</button>
+      </div>
+    </div>
+  `).join("");
+  } catch(e) {
+    el.innerHTML = "<p class='error'>加载失败: " + esc(e.message) + "</p>";
+  }
+}
+
+async function loadPublished() {
+  const el = document.getElementById("published-list");
+  el.innerHTML = "加载中...";
+  try {
+    const patterns = await fetch(API + "/patterns").then(r => r.json());
+  if (patterns.error) { el.innerHTML = "<p class='error'>" + patterns.error + "</p>"; return; }
+  if (!patterns.length) { el.innerHTML = "<p>暂无已发布规则</p>"; return; }
+
+  el.innerHTML = patterns.map(p => `
+    <div class="rule-card published">
+      <div class="rule-header">
+        <span class="badge">${esc(p.status)}</span>
+        <span class="rule-name">${esc(p.name)}</span>
+        <span class="rule-id">${esc(p.id)}</span>
+      </div>
+      <div class="rule-summary">
+        <span class="stat">审批人: ${esc(p.approvedBy||'-')}</span>
+        <span class="stat">发布时间: ${esc((p.approvedAt||'').slice(0,10))}</span>
+      </div>
+      <div class="conditions">
+        <div><strong>MUST:</strong> ${p.mustConditions.map(c => label(c.field)+' '+esc(c.operator)+' '+esc(c.valueJson)).join(', ')}</div>
+        <div><strong>VETO:</strong> ${p.vetoConditions.map(c => label(c.field)+' '+esc(c.operator)+' '+esc(c.valueJson)).join(', ')}</div>
+      </div>
+    </div>
+  `).join("");
+  } catch(e) {
+    el.innerHTML = "<p class='error'>加载失败: " + esc(e.message) + "</p>";
+  }
+}
+
+async function showDetail(id) {
+  const modal = document.getElementById("modal");
+  const body = document.getElementById("modal-body");
+  body.innerHTML = "加载中...";
+  modal.style.display = "flex";
+
+  const rule = await fetch(API + "/rules/" + id).then(r => r.json());
+  if (rule.error) { body.innerHTML = "<p class='error'>" + rule.error + "</p>"; return; }
+
+  body.innerHTML = `
+    <h2>${esc(rule.businessName)}</h2>
+    <div class="detail-grid">
+      <div class="detail-main">
+        ${rule.report ? `
+          <div class="detail-section">
+            <h3>规则解读</h3>
+            <p>${esc(rule.report.interpretation || rule.businessSummary)}</p>
+          </div>
+          ${rule.report.evidence ? `
+          <div class="detail-section">
+            <h3>统计依据</h3>
+            <table class="evidence-table">
+              ${Object.entries(rule.report.evidence).map(([k,v]) => `<tr><td>${label(k)}</td><td>${v}</td></tr>`).join("")}
+            </table>
+          </div>
+          ` : ''}
+          ${rule.report.suggestion ? `
+          <div class="detail-section">
+            <h3>建议</h3>
+            <p class="suggestion">${esc(rule.report.suggestion)}</p>
+          </div>
+          ` : ''}
+        ` : `<div class="detail-section"><h3>摘要</h3><p>${esc(rule.businessSummary)}</p></div>`}
+      </div>
+      <div class="detail-side">
+        <div class="detail-section">
+          <h3>降噪规则</h3>
+          <h4>MUST 条件</h4>
+          <ul>${rule.mustConditions.map(c => `<li>${label(c.field)} ${esc(c.operator)} ${esc(c.valueJson)}</li>`).join("")}</ul>
+          <h4>VETO 条件</h4>
+          <ul>${rule.vetoConditions.map(c => `<li>${label(c.field)} ${esc(c.operator)} ${esc(c.valueJson)}</li>`).join("")}</ul>
+        </div>
+        ${rule.replay ? `
+        <div class="detail-section">
+          <h3>回放验证</h3>
+          <table class="evidence-table">
+            <tr><td>状态</td><td>${rule.replay.passed ? '✅ 通过' : '❌ 失败'}</td></tr>
+            <tr><td>精确率 (Precision)</td><td>${(rule.replay.precision*100).toFixed(1)}%</td></tr>
+            <tr><td>召回率 (Recall)</td><td>${(rule.replay.recall*100).toFixed(1)}%</td></tr>
+            <tr><td>匹配</td><td>${rule.replay.patternMatchedCount} 条</td></tr>
+            <tr><td>否决</td><td>${rule.replay.riskVetoedCount} 条</td></tr>
+          </table>
+        </div>
+        ` : ''}
+        ${rule.evidence ? `
+        <div class="detail-section">
+          <h3>证据</h3>
+          <ul>${rule.evidence.map(e => `<li>${esc(e)}</li>`).join("")}</ul>
+        </div>
+        ` : ''}
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-approve" onclick="approveRule('${id}')" ${rule.published ? 'disabled' : ''}>批准发布</button>
+      <button class="btn-reject" onclick="rejectRule('${id}')" ${rule.published || !rule.accepted ? 'disabled' : ''}>驳回</button>
+    </div>
+  `;
+}
+
+function closeModal(e) {
+  if (!e || e.target === document.getElementById("modal")) {
+    document.getElementById("modal").style.display = "none";
+  }
+}
+
+async function approveRule(id) {
+  if (!confirm("确认批准发布此规则？")) return;
+  const res = await fetch(API + "/rules/" + id + "/approve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ approved_by: "webui-operator", comment: "人工审批通过" })
+  }).then(r => r.json());
+  if (res.published) {
+    alert("发布成功: " + res.patternId);
+    loadRules();
+    closeModal();
+  } else {
+    alert("发布失败: " + JSON.stringify(res.errors || res.error || res));
+  }
+}
+
+async function rejectRule(id) {
+  if (!confirm("确认驳回此规则？")) return;
+  const res = await fetch(API + "/rules/" + id + "/reject", { method: "POST" }).then(r => r.json());
+  if (res.rejected) {
+    alert("已驳回");
+    loadRules();
+    closeModal();
+  }
+}
+
+async function runVerify() {
+  document.getElementById("v-status").textContent = "执行中...";
+  const tenantId = document.getElementById("v-tenant").value || "tenant-a";
+  const res = await fetch(API + "/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      tenantId,
+      incomingStart: new Date(Date.now()-72*3600000).toISOString(),
+      incomingEnd: new Date().toISOString(),
+    })
+  }).then(r => r.json());
+
+  document.getElementById("v-status").textContent = "完成";
+  const el = document.getElementById("verify-result");
+  if (res.error) { el.innerHTML = "<p class='error'>" + res.error + "</p>"; return; }
+
+  el.innerHTML = `
+    <div class="verify-stats">
+      <div class="vs-item">扫描 <b>${res.scannedCount||0}</b> 条</div>
+      <div class="vs-item good">建议降噪 <b>${res.suppressCount||0}</b> 条 (${res.suppressionRate||0}%)</div>
+      <div class="vs-item warn">保留告警 <b>${res.keepCount||0}</b> 条</div>
+    </div>
+    ${res.vetoReasons ? `
+      <div class="detail-section" style="background:#fff;padding:12px;border-radius:8px;margin-top:12px;">
+        <h3>保留原因分布</h3>
+        <table class="evidence-table">
+          ${Object.entries(res.vetoReasons).sort((a,b)=>b[1]-a[1]).map(([k,v]) => `<tr><td>${vetoLabel(k)}</td><td>${v} 条</td></tr>`).join("")}
+        </table>
+      </div>
+    ` : ''}
+    ${res.samples ? `
+      <div style="display:flex;gap:16px;margin-top:12px;">
+        <div class="detail-section" style="flex:1;background:#fff;padding:12px;border-radius:8px;">
+          <h3>降噪示例</h3>
+          ${res.samples.suppress.map(s => `<div style="font-size:13px;padding:2px 0;">${esc(s.alertId)} → ${esc(s.decision)} (${esc(s.patternId||'-')})</div>`).join("")}
+        </div>
+        <div class="detail-section" style="flex:1;background:#fff;padding:12px;border-radius:8px;">
+          <h3>保留示例</h3>
+          ${res.samples.keep.map(s => `<div style="font-size:13px;padding:2px 0;">${esc(s.alertId)} → ${esc(s.decision)} [${(s.veto||[]).join(',')}]</div>`).join("")}
+        </div>
+      </div>
+    ` : ''}
+  `;
+}
+
+function esc(s) { return s ? String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") : ""; }
+
+// Chinese label mappings for evidence/condition fields
+const LABELS = {
+  alert_count: "告警数", active_days: "活跃天数", source_count: "来源IP数",
+  success_rate: "成功率", confirmed_attack_count: "确认攻击数",
+  malicious_source_count: "恶意来源数", extraction_failure_count: "提取失败数",
+  tenant_id: "租户", rule_id: "规则", rule_category: "规则类别",
+  service_key: "服务", protocol: "协议", http_method: "方法", url_pattern: "URL模式",
+  url_first_dir: "首级目录", extension_category: "扩展名类别",
+  request_body_type: "请求体类型", response_status: "响应状态码",
+  response_status_class: "响应状态码类别", response_content_type: "响应类型",
+  source_segment: "来源网段", source_is_internal: "内部来源",
+  source_reputation: "来源信誉", risk_level: "风险等级",
+  is_confirmed_attack: "确认攻击", has_path_traversal: "路径穿越",
+  has_dangerous_extension: "危险扩展名", extraction_failed: "提取失败",
+};
+function label(k) { return LABELS[k] ? LABELS[k]+" ("+k+")" : k; }
+// Label veto reason strings like "risk_level=HIGH"
+function vetoLabel(k) {
+  if (k === "无匹配模式") return k;
+  const eq = k.indexOf("=");
+  if (eq < 0) return k;
+  const field = k.slice(0, eq);
+  const val = k.slice(eq + 1);
+  return (LABELS[field] || field) + "=" + val;
+}
+
+// Demo controls
+async function resetDemo() {
+  const btn = document.getElementById("d-gen");
+  const status = document.getElementById("d-status");
+  btn.disabled = true;
+  status.textContent = "正在生成...";
+  try {
+    const count = parseInt(document.getElementById("d-count").value) || 1000;
+    const res = await fetch(API + "/demo/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ normalCount: count })
+    }).then(r => r.json());
+    if (res.code) { status.textContent = "✗ " + (res.message || res.code); btn.disabled = false; return; }
+    status.innerHTML = "✓ 已生成 <b>" + (res.importedCount || 0) + "</b> 条训练数据" +
+      (res.trainingWindowStart ? " + 独立验证集<br><small>(正常" + (res.importedCount ? Math.round(res.importedCount / 1.11) : 0) + "条 + 边界5% + 风险6%)</small>" : "");
+  } catch(e) {
+    status.textContent = "✗ " + e.message;
+  }
+  btn.disabled = false;
+}
+
+async function triggerAgent() {
+  const btn = document.getElementById("d-analyze");
+  const status = document.getElementById("d-agent-status");
+  btn.disabled = true;
+  status.textContent = "正在触发 Agent...";
+  try {
+    const res = await fetch(API + "/demo/analyze", { method: "POST" }).then(r => r.json());
+    if (res.started) {
+      status.innerHTML = "✓ Agent 已启动<br><b>Run ID:</b> <code>" + res.runId + "</code><br>" +
+        "<small>约 1-2 分钟后刷新待审核规则查看结果</small><br>" +
+        "<small>查看日志: <code>docker exec agent-compose sh -c \"agent-compose --file /data/work/agent-compose.yml logs --run " + res.runId + " --follow\"</code></small>";
+    } else {
+      status.textContent = "✗ " + (res.error || "启动失败");
+    }
+  } catch(e) {
+    status.textContent = "✗ " + e.message;
+  }
+  btn.disabled = false;
+}
+
+// Init
+loadRules();
+</script>
+</body>
+</html>
