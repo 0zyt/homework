@@ -303,8 +303,9 @@ app.post("/api/demo/reset", async (req, res) => {
 
 app.post("/api/demo/analyze", async (_req, res) => {
   try {
-    const cmd = `docker exec agent-compose sh -c "agent-compose run business-identification-agent --file /data/work/agent-compose.yml -d --prompt '请执行完整的在线训练流程：发现候选 -> 分析 -> 保存(含report_json) -> 回放验证。'" 2>&1`;
-    const output = execSync(cmd, { timeout: 15000, encoding: "utf-8" });
+    const prompt = "请执行完整的在线训练流程：发现候选 分析 保存(含report_json) 回放验证。";
+    const cmd = `docker exec agent-compose sh -c 'agent-compose run business-identification-agent --file /data/work/agent-compose.yml -d --prompt "${prompt}"'`;
+    const output = execSync(cmd, { timeout: 15000, encoding: "utf-8", stdio: "pipe" });
     const runId = output.match(/Run:\s*(\S+)/)?.[1] || "";
     res.json({ started: true, runId, message: "Agent 已触发，正在执行在线训练..." });
   } catch (e) {
