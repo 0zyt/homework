@@ -58,6 +58,11 @@ services:
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.deepseek.com/anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-deepseek-v4-flash}
+      # 前端登录鉴权（不设则不开启）
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      AUTH_SESSION_TTL: ${AUTH_SESSION_TTL:-24h}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agent-compose-data:/data
@@ -82,17 +87,20 @@ services:
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      - 127.0.0.1:3456:3456
+      - 3456:3456
 
   agent-compose-frontend:
     image: ${AGENT_COMPOSE_FRONTEND_IMAGE:-ghcr.io/chaitin/agent-compose-ui:latest}
     container_name: agent-compose-frontend
-    profiles: ["with-ui"]
     restart: unless-stopped
     depends_on:
       - agent-compose
+    environment:
+      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-}
+      - AUTH_SECRET=${AUTH_SECRET:-}
     ports:
-      - 127.0.0.1:8080:8000
+      - 8080:8000
 
 volumes:
   octobus-data:
