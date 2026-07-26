@@ -303,10 +303,36 @@ app.post("/api/demo/reset", async (req, res) => {
 
 app.post("/api/demo/analyze", async (_req, res) => {
   try {
-    const prompt = "请执行完整的在线训练流程：发现候选 分析 保存(含report_json) 回放验证。";
-    const cmd = `docker exec agent-compose sh -c 'agent-compose run business-identification-agent --file /data/work/agent-compose.yml -d --prompt "${prompt}"'`;
-    const output = execSync(cmd, { timeout: 15000, encoding: "utf-8", stdio: "pipe" });
-    const runId = output.match(/Run:\s*(\S+)/)?.[1] || "";
+    // 1. 获取 project ID
+    const listResp = await fetch(`http://agent-compose:7410/agentcompose.v2.ProjectService/ListProjects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(5000),
+    });
+    const { projects } = await listResp.json();
+    const projectId = projects?.[0]?.projectId;
+    if (!projectId) {
+      return res.status(500).json({ error: "project not found" });
+    }
+
+    // 2. 触发 Agent run
+    const runResp = await fetch(`http://agent-compose:7410/agentcompose.v2.RunService/RunAgent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId,
+        agentName: "business-identification-agent",
+        prompt: "请执行完整的在线训练流程：发现候选 -> 分析 -> 保存(含report_json) -> 回放验证。",
+        detach: true,
+      }),
+      signal: AbortSignal.timeout(60000),
+    });
+    const runData = await runResp.json();
+    const runId = runData?.run?.summary?.runId || "";
+    if (runData?.code) {
+      return res.status(500).json({ error: runData.message || runData.code });
+    }
     res.json({ started: true, runId, message: "Agent 已触发，正在执行在线训练..." });
   } catch (e) {
     res.status(500).json({ error: e.message || "Agent trigger failed" });
