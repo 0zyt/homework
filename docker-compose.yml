@@ -73,7 +73,9 @@ services:
       - 127.0.0.1:7410:7410
 
   webui:
-    build: ./webui
+    # 默认使用 ghcr 预构建镜像；本地开发时可设置 WEBUI_IMAGE='' 并使用 build（取消下方注释）
+    image: ${WEBUI_IMAGE:-ghcr.io/0zyt/homework/webui:latest}
+    # build: ./webui
     container_name: bi-webui
     restart: unless-stopped
     depends_on:
