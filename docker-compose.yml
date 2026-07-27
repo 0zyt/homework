@@ -40,6 +40,47 @@ services:
       retries: 30
       start_period: 10s
 
+  init:
+    image: ${AGENT_COMPOSE_IMAGE:-ghcr.io/chaitin/agent-compose:latest}
+    container_name: project-init
+    restart: "no"
+    depends_on:
+      octobus:
+        condition: service_healthy
+      agent-compose:
+        condition: service_started
+    environment:
+      - OCTOBUS_BI_CAPSET_TOKEN=${OCTOBUS_BI_CAPSET_TOKEN:-bi-capset-demo-token-0001}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "== [1/3] 修复 OctoBus 权限并初始化..."
+        chown -R octobus:octobus /var/lib/octobus/instances/ 2>/dev/null || true
+        for i in $(seq 1 30); do
+          python3 -c "import urllib.request; urllib.request.urlopen('http://octobus:9000/admin/v1/status')" >/dev/null 2>&1 && break
+          sleep 2
+        done
+        bash /opt/octobus-init.sh
+        chmod 755 /var/lib/octobus/artifacts/services/business-identification/runtime/bin/business-identification.js 2>/dev/null || true
+        echo "== [2/3] 等待 agent-compose daemon 就绪..."
+        for i in $(seq 1 30); do
+          agent-compose --host http://agent-compose:7410 inspect project --file /data/work/agent-compose.yml >/dev/null 2>&1 && break
+          sleep 2
+        done
+        echo "== [3/3] 配置能力网关并创建 project..."
+        agent-compose --host http://agent-compose:7410 --file /data/work/agent-compose.yml up
+        python3 /seed-gateway.py
+        echo "== 初始化完成 =="
+    volumes:
+      - ./business-identification-js:/opt/services/business-identification:ro
+      - ./init-octobus.sh:/opt/octobus-init.sh:ro
+      - ./.env:/opt/octobus-init.env:ro
+      - octobus-data:/var/lib/octobus
+      - agent-compose-data:/data
+      - ./agent-compose.yml:/data/work/agent-compose.yml:ro
+      - ./seed-gateway.py:/seed-gateway.py:ro
+    working_dir: /data/work
+
   agent-compose:
     # 应用层方案：使用已发布的 agent-compose 守护进程镜像，不修改任何 runtime 源码。
     # capset gRPC 数据面所需的全部配置均为声明式（capset_ids + 守护进程 env + 网关 seed）。

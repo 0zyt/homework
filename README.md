@@ -33,17 +33,13 @@
 cp .env.example .env
 # 编辑 .env：填入 ANTHROPIC_API_KEY、AUTH_PASSWORD 等
 
-# 2. 启动全部服务
+# 2. 启动全部服务（自动完成 OctoBus 初始化 + agent-compose 网关配置 + project 创建，等待约 30 秒）
 docker compose up -d
 
-# 3. 初始化 OctoBus（导入服务、创建实例、配置能力集）
-docker exec octobus bash /opt/octobus-init.sh
-
-# 4. 配置 agent-compose 网关
-bash configure-agent-compose.sh
-
-# 5. 打开 WebUI → http://127.0.0.1:3456
+# 3. 打开 WebUI → http://127.0.0.1:3456
 ```
+
+服务器重启后只需 `docker compose up -d`，无需手动执行任何初始化脚本。
 
 **演示流程**：演示控制台 → 生成训练数据 → 触发 Agent 研判 → 待审核规则（审批）→ 效果验证。
 
@@ -54,8 +50,9 @@ homework/
 ├── agent-compose.yml             # Agent 声明 + 系统提示词 + 定时任务
 ├── docker-compose.yml            # 容器编排
 ├── .env / .env.example           # 环境变量 / 模板
-├── configure-agent-compose.sh    # agent-compose 网关配置
+├── configure-agent-compose.sh    # agent-compose 网关配置（手动调试用，启动已自动化）
 ├── init.sh / init-octobus.sh     # 初始化脚本
+├── seed-gateway.py               # init 容器网关配置脚本
 ├── verify.sh / verify.mjs        # 端到端验证
 ├── business-identification-js/   # Service 源码
 │   ├── src/
