@@ -326,7 +326,7 @@ app.post("/api/demo/analyze", async (_req, res) => {
         prompt: "请执行完整的在线训练流程：发现候选 -> 分析 -> 保存(含report_json) -> 回放验证。",
         detach: true,
       }),
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(300000),
     });
     const runData = await runResp.json();
     const runId = runData?.run?.summary?.runId || "";
