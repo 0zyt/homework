@@ -141,3 +141,4 @@ scheduler:
 - [`docs/SECURITY-OPS.md`](docs/SECURITY-OPS.md) — 安全运营视角的完整判定链路
 - [`docs/VERIFY.md`](docs/VERIFY.md) — 部署状态验证命令
 - [`docs/FLOW.md`](docs/FLOW.md) — 完整流程图
+- [`docs/PRESENTATION.md`](docs/PRESENTATION.md) — 演示文档（含 WebUI 截图和定时任务运行效果）
